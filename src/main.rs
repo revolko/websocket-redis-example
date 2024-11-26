@@ -1,12 +1,14 @@
+use std::collections::HashMap;
 use std::io;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, RwLock};
 
 use actix_web::web::{self, Data};
 use actix_web::{App, Error, HttpRequest, HttpResponse, HttpServer};
 use actix_ws::Message;
-use redis::{self, Connection, PubSub};
-use redis::{Commands, RedisResult};
-use tokio::runtime::Handle;
+
+use futures_util::StreamExt;
+use redis::aio::PubSubStream;
+use redis::{self, Commands, Connection, RedisResult};
 
 const REPLICA_ID: i8 = 1;
 
@@ -20,23 +22,38 @@ fn register_client(
     return Ok(());
 }
 
-/// Initialize pubsub queue for the replica
-fn initialize_queue<'a>(redis_con: &'a mut Connection, replica_id: &i8) -> RedisResult<PubSub<'a>> {
-    let mut pubsub = redis_con.as_pubsub();
-    let _ = pubsub.subscribe(format!("worker:{}", replica_id));
-    return Ok(pubsub);
+struct WsConnections {
+    sessions: HashMap<String, Arc<Mutex<actix_ws::Session>>>,
 }
 
-struct WsConnection {
-    session: Mutex<actix_ws::Session>,
-    msg_stream: Mutex<actix_ws::MessageStream>,
+impl Default for WsConnections {
+    fn default() -> Self {
+        return WsConnections {
+            sessions: HashMap::new(),
+        };
+    }
 }
 
-async fn handle(
-    session: Arc<Mutex<actix_ws::Session>>,
-    msg_stream: Arc<Mutex<actix_ws::MessageStream>>,
-) {
-    while let Some(msg) = msg_stream.lock().unwrap().recv().await {
+impl WsConnections {
+    fn new() -> Self {
+        return WsConnections::default();
+    }
+
+    fn add_session(
+        &mut self,
+        session_id: &str,
+        session: actix_ws::Session,
+    ) -> Arc<Mutex<actix_ws::Session>> {
+        let safe_session = Arc::new(Mutex::new(session));
+        self.sessions
+            .insert(session_id.to_string(), safe_session.clone());
+
+        return safe_session;
+    }
+}
+
+async fn handle(session: Arc<Mutex<actix_ws::Session>>, mut msg_stream: actix_ws::MessageStream) {
+    while let Some(msg) = msg_stream.recv().await {
         println!("got message");
         match msg {
             Ok(Message::Text(text)) => {
@@ -54,45 +71,54 @@ async fn handle(
 async fn echo_ws(
     req: HttpRequest,
     body: web::Payload,
-    redis_pool: web::Data<r2d2::Pool<redis::Client>>,
+    ws_connections: web::Data<Arc<RwLock<WsConnections>>>,
 ) -> actix_web::Result<HttpResponse, Error> {
     let (res, session, msg_stream) = actix_ws::handle(&req, body)?;
-    let mut redis_con = redis_pool.get().unwrap(); // map to error
 
-    let session = Arc::new(Mutex::new(session));
-    let msg_stream = Arc::new(Mutex::new(msg_stream));
-    let redis_session = session.clone();
     actix_web::rt::spawn(async move {
         println!("connected");
-        handle(session.clone(), msg_stream.clone()).await;
-    });
-
-    actix_web::rt::task::spawn_blocking(move || {
-        let mut queue = initialize_queue(&mut redis_con, &REPLICA_ID).unwrap();
-        let tokio_handle = Handle::current();
-        loop {
-            let redis_session = redis_session.clone();
-            let msg = queue.get_message().unwrap();
-            let payload: String = msg.get_payload().unwrap();
-            println!("channel '{}': {}", msg.get_channel_name(), payload);
-            tokio_handle
-                .block_on(redis_session.clone().lock().unwrap().text(payload))
-                .unwrap();
-            println!("send a message");
-        }
+        let session = ws_connections
+            .into_inner()
+            .write()
+            .unwrap()
+            .add_session("client", session);
+        handle(session, msg_stream).await;
     });
 
     return Ok(res);
 }
 
+fn spawn_redis_worker(mut stream: PubSubStream, ws_connections: Arc<RwLock<WsConnections>>) {
+    actix_web::rt::spawn(async move {
+        loop {
+            let msg = stream.next().await.unwrap();
+            let payload: String = msg.get_payload().unwrap();
+            println!("channel '{}': {}", msg.get_channel_name(), payload);
+            let ws_read_locked = ws_connections.read().unwrap();
+            let session = ws_read_locked.sessions.get("client").unwrap();
+            session.lock().unwrap().text(payload).await.unwrap();
+        }
+    });
+}
+
 #[actix_web::main]
 async fn main() -> io::Result<()> {
     let client = redis::Client::open("redis://127.0.0.1").unwrap();
+    let (mut sink, stream) = client.get_async_pubsub().await.unwrap().split();
+    sink.subscribe(format!("worker:{}", REPLICA_ID))
+        .await
+        .unwrap();
+
+    // pool will be used to publish messages
     let pool: r2d2::Pool<redis::Client> = r2d2::Pool::builder().build(client).unwrap();
+    let ws_connections = Arc::new(RwLock::new(WsConnections::new()));
+
+    spawn_redis_worker(stream, ws_connections.clone());
 
     HttpServer::new(move || {
         App::new()
             .app_data(Data::new(pool.clone()))
+            .app_data(Data::new(ws_connections.clone()))
             .service(web::resource("/ws").route(web::get().to(echo_ws)))
     })
     .bind(("0.0.0.0", 8080))?
