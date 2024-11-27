@@ -8,7 +8,10 @@ mod redis_worker;
 use crate::redis_worker::spawn_redis_worker;
 
 mod ws;
-use crate::ws::{echo_ws, WsConnections};
+use crate::ws::WsConnections;
+
+mod api;
+use crate::api::echo_ws;
 
 const REPLICA_ID: i8 = 1;
 
