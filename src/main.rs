@@ -6,21 +6,10 @@ use actix_web::web::{self, Data};
 use actix_web::{App, Error, HttpRequest, HttpResponse, HttpServer};
 use actix_ws::Message;
 
-use futures_util::StreamExt;
-use redis::aio::PubSubStream;
-use redis::{self, Commands, Connection, RedisResult};
+mod redis_worker;
+use crate::redis_worker::spawn_redis_worker;
 
 const REPLICA_ID: i8 = 1;
-
-/// Register client to the server replica
-fn register_client(
-    redis_con: &mut Connection,
-    replica_id: &i8,
-    client_id: &str,
-) -> RedisResult<()> {
-    let _: () = redis_con.hset("clients:connection", client_id, replica_id)?;
-    return Ok(());
-}
 
 struct WsConnections {
     sessions: HashMap<String, Arc<Mutex<actix_ws::Session>>>,
@@ -86,19 +75,6 @@ async fn echo_ws(
     });
 
     return Ok(res);
-}
-
-fn spawn_redis_worker(mut stream: PubSubStream, ws_connections: Arc<RwLock<WsConnections>>) {
-    actix_web::rt::spawn(async move {
-        loop {
-            let msg = stream.next().await.unwrap();
-            let payload: String = msg.get_payload().unwrap();
-            println!("channel '{}': {}", msg.get_channel_name(), payload);
-            let ws_read_locked = ws_connections.read().unwrap();
-            let session = ws_read_locked.sessions.get("client").unwrap();
-            session.lock().unwrap().text(payload).await.unwrap();
-        }
-    });
 }
 
 #[actix_web::main]
