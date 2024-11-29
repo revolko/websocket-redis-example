@@ -33,7 +33,7 @@ async fn main() -> io::Result<()> {
         App::new()
             .app_data(Data::new(pool.clone()))
             .app_data(Data::new(ws_connections.clone()))
-            .service(web::resource("/ws").route(web::get().to(echo_ws)))
+            .service(web::resource("/ws/{client_id}").route(web::get().to(echo_ws)))
     })
     .bind(("0.0.0.0", 8080))?
     .run()
