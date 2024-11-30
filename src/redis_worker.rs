@@ -1,9 +1,11 @@
-use crate::{WsConnections, REPLICA_ID};
+use crate::WsConnections;
 
 use futures_util::StreamExt;
 use redis::aio::PubSubStream;
 use redis::{self, Commands, Connection, RedisResult};
+use uuid::Uuid;
 
+use std::collections::HashSet;
 use std::sync::{Arc, RwLock};
 
 use serde::{Deserialize, Serialize};
@@ -20,7 +22,7 @@ pub struct ClientMessage {
 /// Register client to the server replica
 pub fn register_client(
     redis_con: &mut Connection,
-    replica_id: &i8,
+    replica_id: &str,
     client_id: &str,
 ) -> RedisResult<()> {
     let _: () = redis_con.hset(CONNECTIONS_MAP, client_id, replica_id)?;
@@ -50,15 +52,34 @@ pub fn spawn_redis_worker(mut stream: PubSubStream, ws_connections: Arc<RwLock<W
     });
 }
 
-pub fn get_worker_channel(replica_id: &i8) -> String {
+pub fn get_worker_channel(replica_id: &str) -> String {
     return format!("{CHANNEL}:{replica_id}");
 }
 
-pub async fn subscribe_worker(client: &redis::Client) -> RedisResult<PubSubStream> {
+pub async fn subscribe_worker(
+    client: &redis::Client,
+    replica_id: &str,
+) -> RedisResult<PubSubStream> {
     let (mut sink, stream) = client.get_async_pubsub().await?.split();
-    sink.subscribe(get_worker_channel(&REPLICA_ID))
+    sink.subscribe(get_worker_channel(replica_id))
         .await
         .unwrap();
 
     return Ok(stream);
+}
+
+pub fn generate_replica_id(redis_con: &mut Connection) -> String {
+    let existing_ids: HashSet<String> = redis::cmd("PUBSUB")
+        .arg("CHANNELS")
+        .clone()
+        .iter(redis_con)
+        .unwrap()
+        .collect();
+
+    let mut replica_id = Uuid::new_v4().to_string();
+    while existing_ids.contains(&replica_id) {
+        replica_id = Uuid::new_v4().to_string();
+    }
+
+    return replica_id;
 }

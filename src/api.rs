@@ -8,7 +8,6 @@ use redis::Commands;
 use super::WsConnections;
 use crate::redis_worker::{get_worker_channel, register_client, ClientMessage, CONNECTIONS_MAP};
 use crate::ws::handle_ws;
-use crate::REPLICA_ID;
 
 pub async fn echo_ws(
     req: HttpRequest,
@@ -16,6 +15,7 @@ pub async fn echo_ws(
     body: web::Payload,
     ws_connections: web::Data<Arc<RwLock<WsConnections>>>,
     redis_pool: web::Data<r2d2::Pool<redis::Client>>,
+    replica_id: web::Data<String>,
 ) -> actix_web::Result<HttpResponse, Error> {
     let (res, session, msg_stream) = actix_ws::handle(&req, body)?;
     let client_id = client_id.into_inner();
@@ -28,7 +28,7 @@ pub async fn echo_ws(
             .write()
             .unwrap()
             .add_session(&client_id, session);
-        register_client(&mut redis_con, &REPLICA_ID, &client_id).unwrap();
+        register_client(&mut redis_con, &replica_id, &client_id).unwrap();
         handle_ws(session, msg_stream).await;
     });
 
@@ -49,8 +49,8 @@ pub async fn send_message(
     };
 
     let msg_serialize = serde_json::to_string(&client_message).unwrap();
-    let worker_id: i8 = redis_con.hget(CONNECTIONS_MAP, client_id).unwrap();
-    let channel = get_worker_channel(&worker_id);
+    let replica_id: String = redis_con.hget(CONNECTIONS_MAP, client_id).unwrap();
+    let channel = get_worker_channel(&replica_id);
 
     let _: () = redis_con.publish(channel, &msg_serialize).unwrap();
     return Ok(HttpResponse::Ok()
