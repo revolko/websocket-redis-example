@@ -6,7 +6,7 @@ use actix_web::{web, Error, HttpRequest, HttpResponse};
 use redis::Commands;
 
 use super::WsConnections;
-use crate::redis_worker::{register_client, ClientMessage};
+use crate::redis_worker::{get_worker_channel, register_client, ClientMessage, CONNECTIONS_MAP};
 use crate::ws::handle_ws;
 use crate::REPLICA_ID;
 
@@ -49,8 +49,8 @@ pub async fn send_message(
     };
 
     let msg_serialize = serde_json::to_string(&client_message).unwrap();
-    let worker_id: i8 = redis_con.hget("clients:connection", client_id).unwrap();
-    let channel = format!("worker:{}", worker_id);
+    let worker_id: i8 = redis_con.hget(CONNECTIONS_MAP, client_id).unwrap();
+    let channel = get_worker_channel(&worker_id);
 
     let _: () = redis_con.publish(channel, &msg_serialize).unwrap();
     return Ok(HttpResponse::Ok()

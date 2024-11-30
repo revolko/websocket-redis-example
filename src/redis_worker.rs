@@ -8,6 +8,9 @@ use std::sync::{Arc, RwLock};
 
 use serde::{Deserialize, Serialize};
 
+pub const CONNECTIONS_MAP: &str = "clients:connection";
+pub const CHANNEL: &str = "worker";
+
 #[derive(Serialize, Deserialize)]
 pub struct ClientMessage {
     pub client_id: String,
@@ -20,7 +23,7 @@ pub fn register_client(
     replica_id: &i8,
     client_id: &str,
 ) -> RedisResult<()> {
-    let _: () = redis_con.hset("clients:connection", client_id, replica_id)?;
+    let _: () = redis_con.hset(CONNECTIONS_MAP, client_id, replica_id)?;
     return Ok(());
 }
 
@@ -47,9 +50,13 @@ pub fn spawn_redis_worker(mut stream: PubSubStream, ws_connections: Arc<RwLock<W
     });
 }
 
+pub fn get_worker_channel(replica_id: &i8) -> String {
+    return format!("{CHANNEL}:{replica_id}");
+}
+
 pub async fn subscribe_worker(client: &redis::Client) -> RedisResult<PubSubStream> {
     let (mut sink, stream) = client.get_async_pubsub().await?.split();
-    sink.subscribe(format!("worker:{}", REPLICA_ID))
+    sink.subscribe(get_worker_channel(&REPLICA_ID))
         .await
         .unwrap();
 
