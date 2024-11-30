@@ -4,6 +4,7 @@ use std::sync::{Arc, RwLock};
 use actix_web::web::{self, Data};
 use actix_web::{App, HttpServer};
 use api::send_message;
+use redis_worker::subscribe_worker;
 
 mod redis_worker;
 use crate::redis_worker::spawn_redis_worker;
@@ -19,10 +20,7 @@ const REPLICA_ID: i8 = 1;
 #[actix_web::main]
 async fn main() -> io::Result<()> {
     let client = redis::Client::open("redis://127.0.0.1").unwrap();
-    let (mut sink, stream) = client.get_async_pubsub().await.unwrap().split();
-    sink.subscribe(format!("worker:{}", REPLICA_ID))
-        .await
-        .unwrap();
+    let stream = subscribe_worker(&client).await.unwrap();
 
     // pool will be used to publish messages
     let pool: r2d2::Pool<redis::Client> = r2d2::Pool::builder().build(client).unwrap();

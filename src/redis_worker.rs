@@ -1,4 +1,4 @@
-use crate::WsConnections;
+use crate::{WsConnections, REPLICA_ID};
 
 use futures_util::StreamExt;
 use redis::aio::PubSubStream;
@@ -45,4 +45,13 @@ pub fn spawn_redis_worker(mut stream: PubSubStream, ws_connections: Arc<RwLock<W
                 .unwrap();
         }
     });
+}
+
+pub async fn subscribe_worker(client: &redis::Client) -> RedisResult<PubSubStream> {
+    let (mut sink, stream) = client.get_async_pubsub().await?.split();
+    sink.subscribe(format!("worker:{}", REPLICA_ID))
+        .await
+        .unwrap();
+
+    return Ok(stream);
 }
