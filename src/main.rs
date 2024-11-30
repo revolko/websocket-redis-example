@@ -3,6 +3,7 @@ use std::sync::{Arc, RwLock};
 
 use actix_web::web::{self, Data};
 use actix_web::{App, HttpServer};
+use api::send_message;
 
 mod redis_worker;
 use crate::redis_worker::spawn_redis_worker;
@@ -34,6 +35,7 @@ async fn main() -> io::Result<()> {
             .app_data(Data::new(pool.clone()))
             .app_data(Data::new(ws_connections.clone()))
             .service(web::resource("/ws/{client_id}").route(web::get().to(echo_ws)))
+            .service(web::resource("/messages/{client_id}").route(web::post().to(send_message)))
     })
     .bind(("0.0.0.0", 8080))?
     .run()

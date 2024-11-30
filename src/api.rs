@@ -1,6 +1,8 @@
 use std::sync::{Arc, RwLock};
 
+use actix_web::http::header::ContentType;
 use actix_web::{web, Error, HttpRequest, HttpResponse};
+use redis::Commands;
 
 use super::WsConnections;
 use crate::redis_worker::register_client;
@@ -30,4 +32,21 @@ pub async fn echo_ws(
     });
 
     return Ok(res);
+}
+
+pub async fn send_message(
+    client_id: web::Path<String>,
+    body: web::Payload,
+    redis_pool: web::Data<r2d2::Pool<redis::Client>>,
+) -> actix_web::Result<HttpResponse, Error> {
+    let mut redis_con = redis_pool.into_inner().get().unwrap();
+    let client_id = client_id.into_inner();
+
+    let worker_id: i8 = redis_con.hget("clients:connection", client_id).unwrap();
+    println!("the worker id is {}", worker_id);
+    let channel = format!("worker:{}", worker_id);
+    let _: () = redis_con.publish(channel, "message").unwrap();
+    return Ok(HttpResponse::Ok()
+        .content_type(ContentType::json())
+        .body({}));
 }
