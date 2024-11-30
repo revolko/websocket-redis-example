@@ -6,6 +6,14 @@ use redis::{self, Commands, Connection, RedisResult};
 
 use std::sync::{Arc, RwLock};
 
+use serde::{Deserialize, Serialize};
+
+#[derive(Serialize, Deserialize)]
+pub struct ClientMessage {
+    pub client_id: String,
+    pub msg: String,
+}
+
 /// Register client to the server replica
 pub fn register_client(
     redis_con: &mut Connection,
@@ -23,9 +31,18 @@ pub fn spawn_redis_worker(mut stream: PubSubStream, ws_connections: Arc<RwLock<W
             let msg = stream.next().await.unwrap();
             let payload: String = msg.get_payload().unwrap();
             println!("channel '{}': {}", msg.get_channel_name(), payload);
+            let client_message: ClientMessage = serde_json::from_str(&payload).unwrap();
             let ws_read_locked = ws_connections.read().unwrap();
-            let session = ws_read_locked.sessions.get("client").unwrap();
-            session.lock().unwrap().text(payload).await.unwrap();
+            let session = ws_read_locked
+                .sessions
+                .get(&client_message.client_id)
+                .unwrap();
+            session
+                .lock()
+                .unwrap()
+                .text(client_message.msg)
+                .await
+                .unwrap();
         }
     });
 }
