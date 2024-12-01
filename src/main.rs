@@ -17,7 +17,7 @@ use crate::api::echo_ws;
 
 #[actix_web::main]
 async fn main() -> io::Result<()> {
-    let client = redis::Client::open("redis://127.0.0.1").unwrap();
+    let client = redis::Client::open("redis://redis").unwrap();
     let replica_id;
     // I have put it in separate block because otherwise the connection to redis would never be
     // closed as the main function ends only when the HttpServer closes
