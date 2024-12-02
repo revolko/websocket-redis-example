@@ -42,12 +42,7 @@ pub fn spawn_redis_worker(mut stream: PubSubStream, ws_connections: Arc<RwLock<W
                 .sessions
                 .get(&client_message.client_id)
                 .unwrap();
-            session
-                .lock()
-                .unwrap()
-                .text(client_message.msg)
-                .await
-                .unwrap();
+            session.send(client_message.msg).unwrap();
         }
     });
 }

@@ -4,6 +4,7 @@ use actix_web::http::header::ContentType;
 use actix_web::http::StatusCode;
 use actix_web::{web, Error, HttpRequest, HttpResponse};
 use redis::Commands;
+use tokio::sync::mpsc::unbounded_channel;
 
 use super::WsConnections;
 use crate::redis_worker::{get_worker_channel, register_client, ClientMessage, CONNECTIONS_MAP};
@@ -24,12 +25,13 @@ pub async fn echo_ws(
 
     actix_web::rt::spawn(async move {
         println!("connected {}", client_id);
-        let session = ws_connections
+        let (redis_tx, redis_rx) = unbounded_channel::<String>();
+        ws_connections
             .write()
             .unwrap()
-            .add_session(&client_id, session);
+            .add_session(&client_id, redis_tx);
         register_client(&mut redis_con, &replica_id, &client_id).unwrap();
-        handle_ws(session, msg_stream).await;
+        handle_ws(session, msg_stream, redis_rx).await;
     });
 
     return Ok(res);
